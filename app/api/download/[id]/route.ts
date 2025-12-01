@@ -35,32 +35,36 @@ async function readFilesMetadata(): Promise<FileMetadata[]> {
       const content = await readFile(FILES_METADATA_PATH, "utf-8");
       return JSON.parse(content);
     } else {
-      // Use Vercel Blob - fetch metadata from blob URL
+      // Use Vercel Blob - find metadata blob using list()
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
         return [];
       }
 
-      // Try to fetch metadata from stored URL
-      if (!metadataBlobUrl) {
-        // If we don't have the URL, try to get it from environment or return empty
-        // In production, we'll need to store this URL after first upload
-        return [];
-      }
-
       try {
-        const response = await fetch(metadataBlobUrl);
-        if (response.ok) {
-          const text = await response.text();
-          const metadata = JSON.parse(text);
-          // Update metadataBlobUrl from first item if available
-          if (metadata.length > 0 && metadata[0].metadataBlobUrl) {
-            metadataBlobUrl = metadata[0].metadataBlobUrl;
+        const { list } = await import("@vercel/blob");
+        const METADATA_BLOB_KEY = "files-metadata.json";
+        
+        // Use list() to find the metadata blob
+        const { blobs } = await list({
+          prefix: METADATA_BLOB_KEY,
+          limit: 1,
+        });
+
+        if (blobs.length > 0) {
+          const metadataBlob = blobs[0];
+          metadataBlobUrl = metadataBlob.url;
+
+          // Fetch the metadata content
+          const response = await fetch(metadataBlob.url);
+          if (response.ok) {
+            const text = await response.text();
+            const metadata = JSON.parse(text);
+            return metadata;
           }
-          return metadata;
         }
         return [];
       } catch (error: any) {
-        console.error("Error fetching metadata from blob URL:", error);
+        console.error("Error reading metadata from blob:", error);
         return [];
       }
     }
