@@ -1,33 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, unlink, stat, mkdir } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
+import { put, del, head, list } from "@vercel/blob";
 import { randomBytes } from "crypto";
 
-const FILES_DIR = join(process.cwd(), "public", "files");
-const DATA_DIR = join(process.cwd(), "data");
-const FILES_METADATA_PATH = join(DATA_DIR, "files.json");
+const METADATA_BLOB_KEY = "files-metadata.json";
 
 interface FileMetadata {
   id: string;
   originalName: string;
-  fileName: string;
+  blobUrl: string;
   size: number;
   uploadDate: string;
   downloadLink: string;
-}
-
-// Ensure directories exist
-async function ensureDirectories() {
-  if (!existsSync(FILES_DIR)) {
-    await mkdir(FILES_DIR, { recursive: true });
-  }
-  if (!existsSync(DATA_DIR)) {
-    await mkdir(DATA_DIR, { recursive: true });
-  }
-  if (!existsSync(FILES_METADATA_PATH)) {
-    await writeFile(FILES_METADATA_PATH, JSON.stringify([]), "utf-8");
-  }
 }
 
 // Generate unique ID
@@ -35,37 +18,49 @@ function generateId(): string {
   return randomBytes(8).toString("hex");
 }
 
-// Read files metadata
+// Read files metadata from Blob
 async function readFilesMetadata(): Promise<FileMetadata[]> {
   try {
-    const { readFile } = await import("fs/promises");
-    const content = await readFile(FILES_METADATA_PATH, "utf-8");
-    return JSON.parse(content);
+    // Try to get metadata from blob
+    const { get } = await import("@vercel/blob");
+    const blob = await get(METADATA_BLOB_KEY);
+    const text = await blob.text();
+    return JSON.parse(text);
   } catch (error) {
+    // If metadata doesn't exist, return empty array
     return [];
   }
 }
 
-// Write files metadata
+// Write files metadata to Blob
 async function writeFilesMetadata(metadata: FileMetadata[]) {
-  await writeFile(FILES_METADATA_PATH, JSON.stringify(metadata, null, 2), "utf-8");
+  const metadataJson = JSON.stringify(metadata, null, 2);
+  await put(METADATA_BLOB_KEY, metadataJson, {
+    access: "public",
+    contentType: "application/json",
+  });
 }
 
 // GET - Get all files with their download links
 export async function GET() {
   try {
-    await ensureDirectories();
     const files = await readFilesMetadata();
 
-    // Add file existence check
+    // Check if files exist in blob storage
     const filesWithStatus = await Promise.all(
       files.map(async file => {
-        const filePath = join(FILES_DIR, file.fileName);
-        const exists = existsSync(filePath);
-        return {
-          ...file,
-          exists,
-        };
+        try {
+          await head(file.blobUrl);
+          return {
+            ...file,
+            exists: true,
+          };
+        } catch (error) {
+          return {
+            ...file,
+            exists: false,
+          };
+        }
       })
     );
 
@@ -79,8 +74,6 @@ export async function GET() {
 // POST - Upload new PDF file
 export async function POST(request: NextRequest) {
   try {
-    await ensureDirectories();
-
     const formData = await request.formData();
     const file = formData.get("file") as File;
 
@@ -102,14 +95,16 @@ export async function POST(request: NextRequest) {
     // Generate unique ID
     const id = generateId();
     const fileName = `${id}.pdf`;
-    const filePath = join(FILES_DIR, fileName);
 
     // Convert file to buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Write file
-    await writeFile(filePath, buffer);
+    // Upload to Vercel Blob
+    const blob = await put(fileName, buffer, {
+      access: "public",
+      contentType: "application/pdf",
+    });
 
     // Get base URL - support for Vercel and other platforms
     let baseUrl: string;
@@ -133,7 +128,7 @@ export async function POST(request: NextRequest) {
     const metadata: FileMetadata = {
       id,
       originalName: file.name,
-      fileName,
+      blobUrl: blob.url,
       size: file.size,
       uploadDate: new Date().toISOString(),
       downloadLink,
@@ -157,8 +152,6 @@ export async function POST(request: NextRequest) {
 // DELETE - Delete PDF file by ID
 export async function DELETE(request: NextRequest) {
   try {
-    await ensureDirectories();
-
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
@@ -175,11 +168,13 @@ export async function DELETE(request: NextRequest) {
     }
 
     const file = files[fileIndex];
-    const filePath = join(FILES_DIR, file.fileName);
 
-    // Delete file
-    if (existsSync(filePath)) {
-      await unlink(filePath);
+    // Delete file from blob
+    try {
+      await del(file.blobUrl);
+    } catch (error) {
+      console.error("Error deleting blob:", error);
+      // Continue even if blob deletion fails
     }
 
     // Remove from metadata

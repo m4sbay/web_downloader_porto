@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile, stat } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
+import { get } from "@vercel/blob";
 
-const FILES_DIR = join(process.cwd(), "public", "files");
-const DATA_DIR = join(process.cwd(), "data");
-const FILES_METADATA_PATH = join(DATA_DIR, "files.json");
+const METADATA_BLOB_KEY = "files-metadata.json";
 
 interface FileMetadata {
   id: string;
   originalName: string;
-  fileName: string;
+  blobUrl: string;
   size: number;
   uploadDate: string;
   downloadLink: string;
@@ -18,9 +14,9 @@ interface FileMetadata {
 
 async function readFilesMetadata(): Promise<FileMetadata[]> {
   try {
-    const { readFile: readFileMetadata } = await import("fs/promises");
-    const content = await readFileMetadata(FILES_METADATA_PATH, "utf-8");
-    return JSON.parse(content);
+    const blob = await get(METADATA_BLOB_KEY);
+    const text = await blob.text();
+    return JSON.parse(text);
   } catch (error) {
     return [];
   }
@@ -41,34 +37,32 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
     // Read metadata to find file
     const files = await readFilesMetadata();
-    const fileMetadata = files.find((f) => f.id === id);
+    const fileMetadata = files.find(f => f.id === id);
 
     if (!fileMetadata) {
       return NextResponse.json({ error: "File tidak ditemukan" }, { status: 404 });
     }
 
-    const filePath = join(FILES_DIR, fileMetadata.fileName);
+    // Fetch file from blob storage
+    try {
+      const blob = await get(fileMetadata.blobUrl);
+      const blobBuffer = await blob.arrayBuffer();
 
-    if (!existsSync(filePath)) {
-      return NextResponse.json({ error: "File tidak ditemukan" }, { status: 404 });
+      // Return file with proper headers
+      return new NextResponse(blobBuffer, {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'attachment; filename="Portofolio_Maulana_Bayu.pdf"',
+          "Content-Length": blob.size.toString(),
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching blob:", error);
+      return NextResponse.json({ error: "File tidak ditemukan di storage" }, { status: 404 });
     }
-
-    // Read file
-    const fileBuffer = await readFile(filePath);
-    const fileStats = await stat(filePath);
-
-    // Return file with proper headers
-    return new NextResponse(fileBuffer, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": 'attachment; filename="Portofolio_Maulana_Bayu.pdf"',
-        "Content-Length": fileStats.size.toString(),
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
   } catch (error) {
     console.error("Error downloading file:", error);
     return NextResponse.json({ error: "Gagal mendownload file" }, { status: 500 });
   }
 }
-

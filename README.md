@@ -16,6 +16,7 @@ Website sederhana yang otomatis mendownload file PDF portofolio ketika seseorang
 - **Next.js 14+** (App Router)
 - **TypeScript**
 - **React 18**
+- **Vercel Blob Storage** (untuk penyimpanan file di production)
 
 ## Setup Lokal
 
@@ -48,16 +49,33 @@ npm start
 
 ### Vercel (Recommended)
 
-1. Push project ke GitHub
-2. Import project di [Vercel](https://vercel.com)
-3. Deploy otomatis akan berjalan
-4. Link yang dihasilkan akan otomatis menggunakan URL Vercel Anda
+**PENTING: Setup Vercel Blob Storage terlebih dahulu!**
+
+1. **Setup Vercel Blob Storage:**
+   - Buka [Vercel Dashboard](https://vercel.com/dashboard)
+   - Pilih project Anda (atau buat project baru)
+   - Pergi ke tab **Storage**
+   - Klik **Create Database** → Pilih **Blob**
+   - Environment variable `BLOB_READ_WRITE_TOKEN` akan otomatis ter-set
+
+2. **Deploy Project:**
+   - Push project ke GitHub
+   - Import project di [Vercel](https://vercel.com)
+   - Vercel akan otomatis detect Next.js dan deploy
+   - Pastikan environment variable `BLOB_READ_WRITE_TOKEN` sudah ter-set
+
+3. **Setelah Deploy:**
+   - Link yang dihasilkan akan otomatis menggunakan URL Vercel Anda
+   - File disimpan di Vercel Blob Storage (persistent dan bisa diakses dari internet)
+   - Upload file melalui dashboard di production
 
 **Catatan Penting:**
 
+- **WAJIB**: Setup Vercel Blob Storage sebelum deploy, atau upload akan gagal
 - Link download yang dihasilkan akan otomatis menggunakan URL production (misal: `https://your-app.vercel.app/download/[id]`)
 - Link akan berfungsi dan bisa diakses dari internet setelah deployment
 - File yang diupload di localhost tidak akan ikut ke production (harus upload ulang di production)
+- File disimpan di Vercel Blob Storage, bukan filesystem (karena Vercel tidak support write ke filesystem)
 
 Atau menggunakan Vercel CLI:
 
