@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { put, del, head, list } from "@vercel/blob";
+import { put, del, head, list, get } from "@vercel/blob";
 import { randomBytes } from "crypto";
+import { writeFile, readFile, unlink, mkdir, stat } from "fs/promises";
+import { join } from "path";
+import { existsSync } from "fs";
 
 const METADATA_BLOB_KEY = "files-metadata.json";
+const FILES_DIR = join(process.cwd(), "public", "files");
+const DATA_DIR = join(process.cwd(), "data");
+const FILES_METADATA_PATH = join(DATA_DIR, "files-metadata.json");
+
+// Check if running in development without Blob token
+const isDevelopment = process.env.NODE_ENV === "development";
+const hasBlobToken = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useLocalStorage = isDevelopment && !hasBlobToken;
 
 interface FileMetadata {
   id: string;
@@ -18,27 +29,57 @@ function generateId(): string {
   return randomBytes(8).toString("hex");
 }
 
-// Read files metadata from Blob
+// Read files metadata
 async function readFilesMetadata(): Promise<FileMetadata[]> {
   try {
-    // Try to get metadata from blob
-    const { get } = await import("@vercel/blob");
-    const blob = await get(METADATA_BLOB_KEY);
-    const text = await blob.text();
-    return JSON.parse(text);
-  } catch (error) {
-    // If metadata doesn't exist, return empty array
+    if (useLocalStorage) {
+      // Use local filesystem for development
+      if (!existsSync(FILES_METADATA_PATH)) {
+        return [];
+      }
+      const content = await readFile(FILES_METADATA_PATH, "utf-8");
+      return JSON.parse(content);
+    } else {
+      // Use Vercel Blob
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        console.warn("BLOB_READ_WRITE_TOKEN tidak ditemukan, returning empty array");
+        return [];
+      }
+      const blob = await get(METADATA_BLOB_KEY);
+      const text = await blob.text();
+      return JSON.parse(text);
+    }
+  } catch (error: any) {
+    // If metadata doesn't exist (404), return empty array
+    if (error?.status === 404 || error?.message?.includes("not found")) {
+      return [];
+    }
+    // For other errors, log and return empty array
+    console.error("Error reading metadata:", error);
     return [];
   }
 }
 
-// Write files metadata to Blob
+// Write files metadata
 async function writeFilesMetadata(metadata: FileMetadata[]) {
   const metadataJson = JSON.stringify(metadata, null, 2);
-  await put(METADATA_BLOB_KEY, metadataJson, {
-    access: "public",
-    contentType: "application/json",
-  });
+
+  if (useLocalStorage) {
+    // Use local filesystem for development
+    if (!existsSync(DATA_DIR)) {
+      await mkdir(DATA_DIR, { recursive: true });
+    }
+    await writeFile(FILES_METADATA_PATH, metadataJson, "utf-8");
+  } else {
+    // Use Vercel Blob
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      throw new Error("BLOB_READ_WRITE_TOKEN tidak ditemukan");
+    }
+    await put(METADATA_BLOB_KEY, metadataJson, {
+      access: "public",
+      contentType: "application/json",
+    });
+  }
 }
 
 // GET - Get all files with their download links
@@ -46,15 +87,26 @@ export async function GET() {
   try {
     const files = await readFilesMetadata();
 
-    // Check if files exist in blob storage
+    // Check if files exist
     const filesWithStatus = await Promise.all(
       files.map(async file => {
         try {
-          await head(file.blobUrl);
-          return {
-            ...file,
-            exists: true,
-          };
+          if (useLocalStorage) {
+            // Check local filesystem
+            const filePath = join(FILES_DIR, file.blobUrl.split("/").pop() || "");
+            const exists = existsSync(filePath);
+            return {
+              ...file,
+              exists,
+            };
+          } else {
+            // Check blob storage
+            await head(file.blobUrl);
+            return {
+              ...file,
+              exists: true,
+            };
+          }
         } catch (error) {
           return {
             ...file,
@@ -74,6 +126,17 @@ export async function GET() {
 // POST - Upload new PDF file
 export async function POST(request: NextRequest) {
   try {
+    // Check if BLOB_READ_WRITE_TOKEN is set
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      console.error("BLOB_READ_WRITE_TOKEN tidak ditemukan");
+      return NextResponse.json(
+        { 
+          error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup dan environment variable sudah ter-set." 
+        }, 
+        { status: 500 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get("file") as File;
 
@@ -100,11 +163,44 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    // Upload to Vercel Blob
-    const blob = await put(fileName, buffer, {
-      access: "public",
-      contentType: "application/pdf",
-    });
+    let blobUrl: string;
+
+    if (useLocalStorage) {
+      // Use local filesystem for development
+      if (!existsSync(FILES_DIR)) {
+        await mkdir(FILES_DIR, { recursive: true });
+      }
+      const filePath = join(FILES_DIR, fileName);
+      await writeFile(filePath, buffer);
+      blobUrl = `/files/${fileName}`; // Relative path for local
+    } else {
+      // Upload to Vercel Blob
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return NextResponse.json(
+          { 
+            error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup." 
+          }, 
+          { status: 500 }
+        );
+      }
+
+      let blob;
+      try {
+        blob = await put(fileName, buffer, {
+          access: "public",
+          contentType: "application/pdf",
+        });
+        blobUrl = blob.url;
+      } catch (blobError: any) {
+        console.error("Error uploading to blob:", blobError);
+        return NextResponse.json(
+          { 
+            error: `Gagal mengupload ke Blob Storage: ${blobError?.message || "Unknown error"}. Pastikan BLOB_READ_WRITE_TOKEN sudah ter-set dengan benar.` 
+          }, 
+          { status: 500 }
+        );
+      }
+    }
 
     // Get base URL - support for Vercel and other platforms
     let baseUrl: string;
@@ -128,7 +224,7 @@ export async function POST(request: NextRequest) {
     const metadata: FileMetadata = {
       id,
       originalName: file.name,
-      blobUrl: blob.url,
+      blobUrl: blobUrl,
       size: file.size,
       uploadDate: new Date().toISOString(),
       downloadLink,
@@ -143,9 +239,16 @@ export async function POST(request: NextRequest) {
       message: "File berhasil diupload",
       ...metadata,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error uploading file:", error);
-    return NextResponse.json({ error: "Gagal mengupload file" }, { status: 500 });
+    const errorMessage = error?.message || "Unknown error";
+    return NextResponse.json(
+      { 
+        error: `Gagal mengupload file: ${errorMessage}`,
+        details: process.env.NODE_ENV === "development" ? error?.stack : undefined
+      }, 
+      { status: 500 }
+    );
   }
 }
 
@@ -169,12 +272,22 @@ export async function DELETE(request: NextRequest) {
 
     const file = files[fileIndex];
 
-    // Delete file from blob
+    // Delete file
     try {
-      await del(file.blobUrl);
+      if (useLocalStorage) {
+        // Delete from local filesystem
+        const fileName = file.blobUrl.split("/").pop() || "";
+        const filePath = join(FILES_DIR, fileName);
+        if (existsSync(filePath)) {
+          await unlink(filePath);
+        }
+      } else {
+        // Delete from blob storage
+        await del(file.blobUrl);
+      }
     } catch (error) {
-      console.error("Error deleting blob:", error);
-      // Continue even if blob deletion fails
+      console.error("Error deleting file:", error);
+      // Continue even if deletion fails
     }
 
     // Remove from metadata

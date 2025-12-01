@@ -52,6 +52,7 @@ npm start
 **PENTING: Setup Vercel Blob Storage terlebih dahulu!**
 
 1. **Setup Vercel Blob Storage:**
+
    - Buka [Vercel Dashboard](https://vercel.com/dashboard)
    - Pilih project Anda (atau buat project baru)
    - Pergi ke tab **Storage**
@@ -59,6 +60,7 @@ npm start
    - Environment variable `BLOB_READ_WRITE_TOKEN` akan otomatis ter-set
 
 2. **Deploy Project:**
+
    - Push project ke GitHub
    - Import project di [Vercel](https://vercel.com)
    - Vercel akan otomatis detect Next.js dan deploy
