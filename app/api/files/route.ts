@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { put, del, head, list, get } from "@vercel/blob";
+import { put, del, head } from "@vercel/blob";
 import { randomBytes } from "crypto";
 import { writeFile, readFile, unlink, mkdir, stat } from "fs/promises";
 import { join } from "path";
@@ -22,7 +22,11 @@ interface FileMetadata {
   size: number;
   uploadDate: string;
   downloadLink: string;
+  metadataBlobUrl?: string; // Store metadata blob URL for fetching
 }
+
+// Store metadata blob URL in memory (will be set after first upload)
+let metadataBlobUrl: string | null = null;
 
 // Generate unique ID
 function generateId(): string {
@@ -40,21 +44,37 @@ async function readFilesMetadata(): Promise<FileMetadata[]> {
       const content = await readFile(FILES_METADATA_PATH, "utf-8");
       return JSON.parse(content);
     } else {
-      // Use Vercel Blob
+      // Use Vercel Blob - fetch metadata from blob URL
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
         console.warn("BLOB_READ_WRITE_TOKEN tidak ditemukan, returning empty array");
         return [];
       }
-      const blob = await get(METADATA_BLOB_KEY);
-      const text = await blob.text();
-      return JSON.parse(text);
+
+      // Try to fetch metadata from stored URL or construct it
+      if (!metadataBlobUrl) {
+        // If we don't have the URL stored, try to construct it or return empty
+        // We'll need to store this URL after first upload
+        return [];
+      }
+
+      try {
+        const response = await fetch(metadataBlobUrl);
+        if (response.ok) {
+          const text = await response.text();
+          const metadata = JSON.parse(text);
+          // Update metadataBlobUrl from first item if available
+          if (metadata.length > 0 && metadata[0].metadataBlobUrl) {
+            metadataBlobUrl = metadata[0].metadataBlobUrl;
+          }
+          return metadata;
+        }
+        return [];
+      } catch (error: any) {
+        console.error("Error fetching metadata from blob URL:", error);
+        return [];
+      }
     }
   } catch (error: any) {
-    // If metadata doesn't exist (404), return empty array
-    if (error?.status === 404 || error?.message?.includes("not found")) {
-      return [];
-    }
-    // For other errors, log and return empty array
     console.error("Error reading metadata:", error);
     return [];
   }
@@ -75,9 +95,15 @@ async function writeFilesMetadata(metadata: FileMetadata[]) {
     if (!process.env.BLOB_READ_WRITE_TOKEN) {
       throw new Error("BLOB_READ_WRITE_TOKEN tidak ditemukan");
     }
-    await put(METADATA_BLOB_KEY, metadataJson, {
+    // Store metadata in blob and save the URL
+    const blob = await put(METADATA_BLOB_KEY, metadataJson, {
       access: "public",
       contentType: "application/json",
+    });
+    metadataBlobUrl = blob.url;
+    // Store metadata URL in each metadata item for future reads
+    metadata.forEach(item => {
+      item.metadataBlobUrl = blob.url;
     });
   }
 }
@@ -100,12 +126,19 @@ export async function GET() {
               exists,
             };
           } else {
-            // Check blob storage
-            await head(file.blobUrl);
-            return {
-              ...file,
-              exists: true,
-            };
+            // Check blob storage by trying to fetch the URL
+            try {
+              const response = await fetch(file.blobUrl, { method: "HEAD" });
+              return {
+                ...file,
+                exists: response.ok,
+              };
+            } catch (error) {
+              return {
+                ...file,
+                exists: false,
+              };
+            }
           }
         } catch (error) {
           return {
@@ -126,17 +159,6 @@ export async function GET() {
 // POST - Upload new PDF file
 export async function POST(request: NextRequest) {
   try {
-    // Check if BLOB_READ_WRITE_TOKEN is set
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      console.error("BLOB_READ_WRITE_TOKEN tidak ditemukan");
-      return NextResponse.json(
-        {
-          error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup dan environment variable sudah ter-set.",
-        },
-        { status: 500 }
-      );
-    }
-
     const formData = await request.formData();
     const file = formData.get("file") as File;
 
@@ -220,6 +242,9 @@ export async function POST(request: NextRequest) {
 
     const downloadLink = `${baseUrl}/download/${id}`;
 
+    // Read existing metadata first
+    const files = await readFilesMetadata();
+
     // Create metadata
     const metadata: FileMetadata = {
       id,
@@ -230,9 +255,10 @@ export async function POST(request: NextRequest) {
       downloadLink,
     };
 
-    // Save metadata
-    const files = await readFilesMetadata();
+    // Add to files array
     files.push(metadata);
+
+    // Save metadata (this will also store the metadata blob URL)
     await writeFilesMetadata(files);
 
     return NextResponse.json({

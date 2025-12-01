@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { get } from "@vercel/blob";
 import { readFile, stat } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
 
-const METADATA_BLOB_KEY = "files-metadata.json";
 const FILES_DIR = join(process.cwd(), "public", "files");
 const DATA_DIR = join(process.cwd(), "data");
 const FILES_METADATA_PATH = join(DATA_DIR, "files-metadata.json");
@@ -21,7 +19,11 @@ interface FileMetadata {
   size: number;
   uploadDate: string;
   downloadLink: string;
+  metadataBlobUrl?: string;
 }
+
+// Store metadata blob URL in memory
+let metadataBlobUrl: string | null = null;
 
 async function readFilesMetadata(): Promise<FileMetadata[]> {
   try {
@@ -33,18 +35,36 @@ async function readFilesMetadata(): Promise<FileMetadata[]> {
       const content = await readFile(FILES_METADATA_PATH, "utf-8");
       return JSON.parse(content);
     } else {
-      // Use Vercel Blob
+      // Use Vercel Blob - fetch metadata from blob URL
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
         return [];
       }
-      const blob = await get(METADATA_BLOB_KEY);
-      const text = await blob.text();
-      return JSON.parse(text);
+
+      // Try to fetch metadata from stored URL
+      if (!metadataBlobUrl) {
+        // If we don't have the URL, try to get it from environment or return empty
+        // In production, we'll need to store this URL after first upload
+        return [];
+      }
+
+      try {
+        const response = await fetch(metadataBlobUrl);
+        if (response.ok) {
+          const text = await response.text();
+          const metadata = JSON.parse(text);
+          // Update metadataBlobUrl from first item if available
+          if (metadata.length > 0 && metadata[0].metadataBlobUrl) {
+            metadataBlobUrl = metadata[0].metadataBlobUrl;
+          }
+          return metadata;
+        }
+        return [];
+      } catch (error: any) {
+        console.error("Error fetching metadata from blob URL:", error);
+        return [];
+      }
     }
   } catch (error: any) {
-    if (error?.status === 404 || error?.message?.includes("not found")) {
-      return [];
-    }
     console.error("Error reading metadata:", error);
     return [];
   }
@@ -94,15 +114,20 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
           },
         });
       } else {
-        // Fetch from blob storage
-        const blob = await get(fileMetadata.blobUrl);
-        const blobBuffer = await blob.arrayBuffer();
+        // Fetch from blob storage using the blob URL
+        const response = await fetch(fileMetadata.blobUrl);
+        if (!response.ok) {
+          return NextResponse.json({ error: "File tidak ditemukan di storage" }, { status: 404 });
+        }
+
+        const blobBuffer = await response.arrayBuffer();
+        const contentLength = response.headers.get("content-length") || blobBuffer.byteLength.toString();
 
         return new NextResponse(blobBuffer, {
           headers: {
             "Content-Type": "application/pdf",
             "Content-Disposition": 'attachment; filename="Portofolio_Maulana_Bayu.pdf"',
-            "Content-Length": blob.size.toString(),
+            "Content-Length": contentLength,
             "Cache-Control": "public, max-age=31536000, immutable",
           },
         });
