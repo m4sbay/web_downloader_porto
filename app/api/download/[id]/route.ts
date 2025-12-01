@@ -77,7 +77,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         // Read from local filesystem
         const fileName = fileMetadata.blobUrl.split("/").pop() || "";
         const filePath = join(FILES_DIR, fileName);
-        
+
         if (!existsSync(filePath)) {
           return NextResponse.json({ error: "File tidak ditemukan di storage" }, { status: 404 });
         }

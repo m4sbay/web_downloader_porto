@@ -130,9 +130,9 @@ export async function POST(request: NextRequest) {
     if (!process.env.BLOB_READ_WRITE_TOKEN) {
       console.error("BLOB_READ_WRITE_TOKEN tidak ditemukan");
       return NextResponse.json(
-        { 
-          error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup dan environment variable sudah ter-set." 
-        }, 
+        {
+          error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup dan environment variable sudah ter-set.",
+        },
         { status: 500 }
       );
     }
@@ -177,9 +177,9 @@ export async function POST(request: NextRequest) {
       // Upload to Vercel Blob
       if (!process.env.BLOB_READ_WRITE_TOKEN) {
         return NextResponse.json(
-          { 
-            error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup." 
-          }, 
+          {
+            error: "BLOB_READ_WRITE_TOKEN tidak ditemukan. Pastikan Vercel Blob Storage sudah di-setup.",
+          },
           { status: 500 }
         );
       }
@@ -194,9 +194,9 @@ export async function POST(request: NextRequest) {
       } catch (blobError: any) {
         console.error("Error uploading to blob:", blobError);
         return NextResponse.json(
-          { 
-            error: `Gagal mengupload ke Blob Storage: ${blobError?.message || "Unknown error"}. Pastikan BLOB_READ_WRITE_TOKEN sudah ter-set dengan benar.` 
-          }, 
+          {
+            error: `Gagal mengupload ke Blob Storage: ${blobError?.message || "Unknown error"}. Pastikan BLOB_READ_WRITE_TOKEN sudah ter-set dengan benar.`,
+          },
           { status: 500 }
         );
       }
@@ -243,10 +243,10 @@ export async function POST(request: NextRequest) {
     console.error("Error uploading file:", error);
     const errorMessage = error?.message || "Unknown error";
     return NextResponse.json(
-      { 
+      {
         error: `Gagal mengupload file: ${errorMessage}`,
-        details: process.env.NODE_ENV === "development" ? error?.stack : undefined
-      }, 
+        details: process.env.NODE_ENV === "development" ? error?.stack : undefined,
+      },
       { status: 500 }
     );
   }

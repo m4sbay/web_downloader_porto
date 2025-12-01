@@ -89,7 +89,7 @@ export default function Home() {
               Download Portfolio PDF
             </a>
             <a
-              href="/dashboard"
+              href="/login"
               style={{
                 display: "inline-block",
                 padding: "0.75rem 1.5rem",
@@ -155,7 +155,7 @@ export default function Home() {
         >
           <p style={{ color: "#666", marginBottom: "1rem" }}>Memuat...</p>
           <a
-            href="/dashboard"
+            href="/login"
             style={{
               display: "inline-block",
               padding: "0.5rem 1rem",

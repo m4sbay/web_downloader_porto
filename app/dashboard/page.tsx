@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 interface FileInfo {
   id: string;
@@ -13,25 +14,61 @@ interface FileInfo {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Ensure we're on dashboard page, not download page
-    if (typeof window !== "undefined") {
-      const path = window.location.pathname;
-      if (path.startsWith("/download/")) {
-        // Redirect if accidentally on download page
-        window.location.href = "/dashboard";
-        return;
-      }
-    }
-    fetchFiles();
+    // Check authentication
+    checkAuth();
   }, []);
+
+  const checkAuth = async () => {
+    try {
+      const response = await fetch("/api/auth/check");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.authenticated) {
+          setAuthenticated(true);
+          // Ensure we're on dashboard page, not download page
+          if (typeof window !== "undefined") {
+            const path = window.location.pathname;
+            if (path.startsWith("/download/")) {
+              // Redirect if accidentally on download page
+              window.location.href = "/dashboard";
+              return;
+            }
+          }
+          fetchFiles();
+        } else {
+          setAuthenticated(false);
+          router.push("/login");
+        }
+      } else {
+        setAuthenticated(false);
+        router.push("/login");
+      }
+    } catch (error) {
+      console.error("Auth check error:", error);
+      setAuthenticated(false);
+      router.push("/login");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.push("/login");
+      router.refresh();
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
 
   const fetchFiles = async () => {
     try {
@@ -161,6 +198,30 @@ export default function Dashboard() {
     });
   };
 
+  // Show loading while checking auth
+  if (authenticated === null) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "#f5f5f5",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <p style={{ color: "#666" }}>Memeriksa autentikasi...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show nothing if not authenticated (will redirect)
+  if (!authenticated) {
+    return null;
+  }
+
   return (
     <div
       style={{
@@ -179,18 +240,43 @@ export default function Dashboard() {
           boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
         }}
       >
-        <h1
-          style={{
-            fontSize: "2rem",
-            marginBottom: "0.5rem",
-            color: "#333",
-          }}
-        >
-          Dashboard Admin
-        </h1>
-        <p style={{ color: "#666", marginBottom: "2rem" }}>
-          Kelola file PDF portofolio Anda di sini. Setiap file yang diupload akan mendapat link unik.
-        </p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+          <div>
+            <h1
+              style={{
+                fontSize: "2rem",
+                marginBottom: "0.5rem",
+                color: "#333",
+              }}
+            >
+              Dashboard Admin
+            </h1>
+            <p style={{ color: "#666", margin: 0 }}>
+              Kelola file PDF portofolio Anda di sini. Setiap file yang diupload akan mendapat link unik.
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            style={{
+              padding: "0.5rem 1rem",
+              background: "#dc3545",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontSize: "0.9rem",
+              fontWeight: "500",
+            }}
+            onMouseOver={e => {
+              e.currentTarget.style.background = "#c82333";
+            }}
+            onMouseOut={e => {
+              e.currentTarget.style.background = "#dc3545";
+            }}
+          >
+            Logout
+          </button>
+        </div>
 
         {message && (
           <div
